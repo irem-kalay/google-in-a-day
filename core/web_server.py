@@ -64,6 +64,7 @@ def save_state_to_disk() -> None:
     try:
         visited_snapshot = list(visited_set.snapshot())
         index_snapshot = inverted_index.snapshot()
+        title_snapshot = title_map.snapshot()
 
         metadata_raw = metadata_map.snapshot()
         metadata_snapshot: Dict[str, Dict[str, object]] = {
@@ -78,6 +79,7 @@ def save_state_to_disk() -> None:
             "inverted_index": index_snapshot,
             "metadata": metadata_snapshot,
             "crawl_queue": queue_snapshot,
+            "title_map": title_snapshot,
         }
 
         with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -108,6 +110,12 @@ def load_state_from_disk() -> bool:
         inverted_index.load_snapshot(state.get("inverted_index", {}))
         metadata_map.load_snapshot(state.get("metadata", {}))
         crawl_queue.load_snapshot(state.get("crawl_queue", []))
+        saved_titles = state.get("title_map", {})
+        for url, title in saved_titles.items():
+            try:
+                title_map.set_title(url, title)
+            except Exception:
+                logging.exception("Failed to restore title for URL: %s", url)
         logging.info("Web crawler state loaded from %s", STATE_FILE)
         return True
     except Exception:
@@ -461,6 +469,58 @@ HTML_PAGE = """<!DOCTYPE html>
       gap: 4px;
     }
 
+    .indexing-section {
+      margin-top: 18px;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .indexing-title {
+      margin: 0 0 6px 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: #202124;
+    }
+    .indexing-description {
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      color: #5f6368;
+    }
+    .indexing-form {
+      display: flex;
+      gap: 6px;
+    }
+    .indexing-form input[type="url"] {
+      flex: 1;
+      border-radius: 999px;
+      border: 1px solid #dfe1e5;
+      padding: 6px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+    .indexing-form button {
+      border: none;
+      background: #1a73e8;
+      color: #ffffff;
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
+    }
+    .indexing-form button:hover {
+      background: #185abc;
+      box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    }
+    .indexing-form button:active {
+      transform: translateY(1px);
+      box-shadow: none;
+    }
+    .indexing-status {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #5f6368;
+    }
+
     .metric-pill {
       display: inline-flex;
       align-items: center;
@@ -562,7 +622,7 @@ HTML_PAGE = """<!DOCTYPE html>
               <button type="submit">Ara</button>
             </div>
           </form>
-          <p id="searchInfo" class="search-hint">Sonuç görmek için bir sorgu gönderin.(başlangıç sitesi: https://obs.itu.edu.tr/public/DersProgram ve wikipedia)</p>
+          <p id="searchInfo" class="search-hint">Sonuç görmek için bir sorgu gönderin.(önce başlangıç sitesi giriniz)</p>
         </div>
 
         <div>
@@ -600,6 +660,22 @@ HTML_PAGE = """<!DOCTYPE html>
           Metrikler her saniye <code>/api/metrics</code> uç noktasından yenilenir.
           Arama sonuçları ise <code>/api/search</code> üzerinden &ccedil;ekilir.
         </p>
+        <div class="indexing-section">
+          <h3 class="indexing-title">Manuel Indexleme Başlat</h3>
+          <p class="indexing-description">
+            Yeni bir "seed" URL girerek crawler kuyruğuna manuel olarak sayfa ekleyin.
+          </p>
+          <form id="indexForm" class="indexing-form">
+            <input
+              id="indexUrlInput"
+              type="url"
+              placeholder="Örn: https://www.ornek.com/"
+              autocomplete="off"
+            />
+            <button type="submit">Start Indexing</button>
+          </form>
+          <p id="indexStatus" class="indexing-status"></p>
+        </div>
       </aside>
     </div>
   </main>
@@ -618,6 +694,9 @@ HTML_PAGE = """<!DOCTYPE html>
     const searchInfoEl = document.getElementById("searchInfo");
     const searchForm = document.getElementById("searchForm");
     const searchInput = document.getElementById("searchInput");
+    const indexForm = document.getElementById("indexForm");
+    const indexUrlInput = document.getElementById("indexUrlInput");
+    const indexStatusEl = document.getElementById("indexStatus");
 
     function updatePill(status) {
       pillEl.textContent = status;
@@ -704,6 +783,50 @@ HTML_PAGE = """<!DOCTYPE html>
       performSearch(searchInput.value || "");
     });
 
+    async function startIndexing(url) {
+      const trimmed = (url || "").trim();
+      if (!trimmed) {
+        indexStatusEl.textContent = "Lütfen geçerli bir URL girin.";
+        indexStatusEl.style.color = "#c5221f";
+        return;
+      }
+      indexStatusEl.textContent = "URL kuyruğa ekleniyor...";
+      indexStatusEl.style.color = "#5f6368";
+      const encoded = encodeURIComponent(trimmed);
+      try {
+        const res = await fetch("/api/index?url=" + encoded, { method: "GET" });
+        let data = {};
+        try {
+          data = await res.json();
+        } catch (e) {
+          // JSON cevabı yoksa, genel hata ile devam et
+        }
+        if (!res.ok || !data.ok) {
+          const message = (data && data.error) ? data.error : ("İstek başarısız: HTTP " + res.status);
+          indexStatusEl.textContent = message;
+          indexStatusEl.style.color = "#c5221f";
+          return;
+        }
+        indexStatusEl.textContent = "URL kuyruğa eklendi: " + (data.url || trimmed);
+        indexStatusEl.style.color = "#137333";
+        indexUrlInput.value = "";
+        setTimeout(() => {
+          indexStatusEl.textContent = "";
+          indexStatusEl.style.color = "#5f6368";
+        }, 4000);
+      } catch (err) {
+        indexStatusEl.textContent = "Indexleme isteği başarısız: " + err;
+        indexStatusEl.style.color = "#c5221f";
+      }
+    }
+
+    if (indexForm) {
+      indexForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        startIndexing(indexUrlInput.value || "");
+      });
+    }
+
     // Poll metrics every second
     fetchMetrics();
     setInterval(fetchMetrics, 1000);
@@ -739,6 +862,8 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
             self._handle_metrics()
         elif path == "/api/search":
             self._handle_search(parsed)
+        elif path == "/api/index":
+            self._handle_index(parsed)
         else:
             self.send_error(404, "Not Found")
 
@@ -811,6 +936,59 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
         }
         self._send_json(200, payload)
 
+    def _handle_index(self, parsed_url) -> None:
+        qs = parse_qs(parsed_url.query)
+        url_list = qs.get("url", [])
+        if not url_list:
+            self._send_json(
+                400,
+                {"ok": False, "error": "Missing 'url' query parameter."},
+            )
+            return
+
+        raw_url = (url_list[0] or "").strip()
+        if not raw_url:
+            self._send_json(
+                400,
+                {"ok": False, "error": "URL cannot be empty."},
+            )
+            return
+
+        parsed_target = urlparse(raw_url)
+        if parsed_target.scheme not in ("http", "https") or not parsed_target.netloc:
+            self._send_json(
+                400,
+                {
+                    "ok": False,
+                    "error": "Invalid URL. Only http/https URLs with a hostname are allowed.",
+                },
+            )
+            return
+
+        normalized_url = raw_url
+
+        try:
+            crawl_queue.put_task(normalized_url, depth=0)
+            metadata_map.record_discovery(normalized_url, origin_url=None, depth=0)
+        except Exception:
+            logging.exception("Failed to enqueue manual index URL: %s", normalized_url)
+            self._send_json(
+                500,
+                {
+                    "ok": False,
+                    "error": "Failed to enqueue URL for indexing.",
+                },
+            )
+            return
+
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "url": normalized_url,
+            },
+        )
+
     # ------------- Utility -------------
 
     def _send_json(self, status_code: int, payload: Dict) -> None:
@@ -840,20 +1018,9 @@ def start_crawler_workers() -> None:
     # Önce mevcut state'i diskten yüklemeyi dene; başarılıysa seed'leri yeniden ekleme.
     resumed = load_state_from_disk()
     if not resumed:
-        # 1) Önce Wikipedia'yı ekle (SEED_URL değişkeninden alıyoruz)
-        try:
-            crawl_queue.put_task(SEED_URL, depth=0)
-            metadata_map.record_discovery(SEED_URL, origin_url=None, depth=0)
-        except Exception:
-            logging.error(f"Wikipedia seed'i eklenemedi: {SEED_URL}")
-
-        # 2) Sonra İTÜ linklerini ekle
-        for url in itu_seeds:
-            try:
-                crawl_queue.put_task(url, depth=0)
-                metadata_map.record_discovery(url, origin_url=None, depth=0)
-            except Exception:
-                logging.error(f"Seed eklenemedi: {url}")
+        pass  # <--- BURAYA PASS EKLİYORUZ
+        # Otomatik seed ekleme devre dışı bırakıldı.
+        # Manuel indexleme için UI üzerinden veya state.json'dan yüklenen veriler kullanılacaktır.
 
     # Worker'ları başlat (Burası aynı kalıyor)
     for i in range(NUM_WORKERS):
@@ -869,6 +1036,8 @@ def start_crawler_workers() -> None:
         )
         worker.start()
         workers.append(worker)
+        # Otomatik seed ekleme devre dışı bırakıldı.
+        # Manuel indexleme için UI üzerinden veya state.json'dan yüklenen veriler kullanılacaktır.
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
