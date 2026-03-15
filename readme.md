@@ -1,4 +1,5 @@
 # Google in a Day — Web Crawler & Real-Time Search Engine
+**GitHub Repository:** https://github.com/irem-kalay/google-in-a-day.git
 
 A concurrent web crawler and real-time search engine built using only Python's standard library (`urllib`, `html.parser`, `threading`, `queue`, `http.server`).
 
@@ -17,6 +18,7 @@ Run `web_server.py` inside the `core` folder.
 The original `state.json` is in the `old_versions_and_extras` folder.
 
 ```bash
+cd core
 python web_server.py
 ```
 
@@ -41,6 +43,12 @@ Edit the constants at the top of `web_server.py`:
 | `MAX_DEPTH` | `2` | Maximum crawl depth |
 | `NUM_WORKERS` | `4` | Number of concurrent crawler threads |
 | `QUEUE_MAXSIZE` | `1000` | Back-pressure queue limit |
+
+### API Endpoints
+The dashboard is powered by lightweight JSON API endpoints:
+- `GET /api/metrics`: Returns crawler state and back-pressure status.
+- `GET /api/search?q={query}`: Returns ranked search results for a given query.
+- `GET /api/index?url={url}`: Enqueues a new URL for the crawler.
 
 ## Dashboard
 
