@@ -9,11 +9,19 @@ A concurrent web crawler and real-time search engine built using only Python's s
 
 ## How to Run
 
+Run `web_server.py` inside the `core` folder.
+
+- **With `state.json`:** The crawler resumes from a previously saved state (pre-crawled by me).
+- **Without `state.json`:** The crawler starts fresh. When you press `Ctrl+C`, it saves a new `state.json` automatically.
+
+The original `state.json` is in the `old_versions_and_extras` folder.
+
+
 ```bash
 python web_server.py
 ```
 
-Then open your browser and go to:
+Then open your browser and go to localhost:
 
 ```
 http://127.0.0.1:8000
