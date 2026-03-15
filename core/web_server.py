@@ -27,7 +27,6 @@ from parser import CrawlerWorker
 # ============================================================
 
 SEED_URL = "https://tr.wikipedia.org/wiki/Anasayfa" # ITU link: "https://obs.itu.edu.tr/public/DersProgram"
-MAX_DEPTH = 2
 NUM_WORKERS = 4
 QUEUE_MAXSIZE = 1000
 SEARCH_TOP_N = 10
@@ -487,15 +486,37 @@ HTML_PAGE = """<!DOCTYPE html>
     }
     .indexing-form {
       display: flex;
-      gap: 6px;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
     }
     .indexing-form input[type="url"] {
       flex: 1;
+      min-width: 160px;
       border-radius: 999px;
       border: 1px solid #dfe1e5;
       padding: 6px 10px;
       font-size: 13px;
       outline: none;
+    }
+    .indexing-form .depth-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .indexing-form .depth-input-wrap label {
+      font-size: 12px;
+      color: #5f6368;
+      white-space: nowrap;
+    }
+    .indexing-form input[type="number"] {
+      width: 52px;
+      border-radius: 6px;
+      border: 1px solid #dfe1e5;
+      padding: 6px 8px;
+      font-size: 13px;
+      outline: none;
+      text-align: center;
     }
     .indexing-form button {
       border: none;
@@ -672,6 +693,18 @@ HTML_PAGE = """<!DOCTYPE html>
               placeholder="e.g. https://www.example.com/"
               autocomplete="off"
             />
+            <div class="depth-input-wrap">
+              <label for="indexDepthInput">Depth (k)</label>
+              <input
+                id="indexDepthInput"
+                type="number"
+                min="0"
+                max="5"
+                value="2"
+                title="Max crawl depth (0–5)"
+                autocomplete="off"
+              />
+            </div>
             <button type="submit">Start Indexing</button>
           </form>
           <p id="indexStatus" class="indexing-status"></p>
@@ -696,6 +729,7 @@ HTML_PAGE = """<!DOCTYPE html>
     const searchInput = document.getElementById("searchInput");
     const indexForm = document.getElementById("indexForm");
     const indexUrlInput = document.getElementById("indexUrlInput");
+    const indexDepthInput = document.getElementById("indexDepthInput");
     const indexStatusEl = document.getElementById("indexStatus");
 
     function updatePill(status) {
@@ -790,11 +824,18 @@ HTML_PAGE = """<!DOCTYPE html>
         indexStatusEl.style.color = "#c5221f";
         return;
       }
+      let kValue = 2;
+      if (indexDepthInput) {
+        const parsed = parseInt(indexDepthInput.value, 10);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 5) {
+          kValue = parsed;
+        }
+      }
       indexStatusEl.textContent = "Adding URL to queue...";
       indexStatusEl.style.color = "#5f6368";
       const encoded = encodeURIComponent(trimmed);
       try {
-        const res = await fetch("/api/index?url=" + encoded, { method: "GET" });
+        const res = await fetch("/api/index?url=" + encoded + "&k=" + kValue, { method: "GET" });
         let data = {};
         try {
           data = await res.json();
@@ -823,7 +864,7 @@ HTML_PAGE = """<!DOCTYPE html>
     if (indexForm) {
       indexForm.addEventListener("submit", function (e) {
         e.preventDefault();
-        startIndexing(indexUrlInput.value || "");
+        startIndexing(indexUrlInput ? indexUrlInput.value || "" : "");
       });
     }
 
@@ -965,10 +1006,18 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        # Parse depth (k); default to 2 if missing or invalid
+        k_list = qs.get("k", [])
+        try:
+            k = int(k_list[0]) if k_list else 2
+        except (ValueError, TypeError, IndexError):
+            k = 2
+        k = max(0, min(5, k))
+
         normalized_url = raw_url
 
         try:
-            crawl_queue.put_task(normalized_url, depth=0)
+            crawl_queue.put_task(normalized_url, depth=0, max_depth=k)
             metadata_map.record_discovery(normalized_url, origin_url=None, depth=0)
         except Exception:
             logging.exception("Failed to enqueue manual index URL: %s", normalized_url)
@@ -1028,7 +1077,6 @@ def start_crawler_workers() -> None:
             queue=crawl_queue,
             visited=visited_set,
             index=inverted_index,
-            max_depth=MAX_DEPTH,
             stop_event=stop_event,
             title_map=title_map,
             metadata_map=metadata_map,

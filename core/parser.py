@@ -177,7 +177,6 @@ class CrawlerWorker(threading.Thread):
         queue: CrawlQueue,
         visited: ThreadSafeVisitedSet,
         index: ThreadSafeInvertedIndex,
-        max_depth: int,
         stop_event: threading.Event,
         request_timeout: float = 5.0,
         user_agent: str = "SimpleCrawler/0.1",
@@ -193,7 +192,6 @@ class CrawlerWorker(threading.Thread):
         self._index = index
         self._title_map = title_map
         self._metadata_map = metadata_map
-        self._max_depth = max_depth
         self._stop_event = stop_event
         self._request_timeout = request_timeout
         self._user_agent = user_agent
@@ -249,7 +247,7 @@ class CrawlerWorker(threading.Thread):
                 self._metadata_map.record_discovery(url, origin_url=None, depth=depth)
 
         # Derinlik sınırı kontrolü
-        if depth > self._max_depth:
+        if depth > task.max_depth:
             self._logger.debug("Derinlik sınırı aşıldı (%s): %s", depth, url)
             return
 
@@ -291,7 +289,7 @@ class CrawlerWorker(threading.Thread):
             self._title_map.set_title(url, title)
 
         # Yeni linkleri kuyruğa ekle
-        self._enqueue_new_links(links, depth, origin_url=url)
+        self._enqueue_new_links(links, depth, task.max_depth, origin_url=url)
 
     def _fetch_html(self, url: str) -> Optional[str]:
         """
@@ -335,6 +333,7 @@ class CrawlerWorker(threading.Thread):
         self,
         links: Iterable[str],
         current_depth: int,
+        max_depth: int,
         origin_url: str,
     ) -> None:
         """
@@ -360,7 +359,7 @@ class CrawlerWorker(threading.Thread):
                         depth=next_depth,
                     )
                 # DÜZELTME 1: block=False yaptık. Kuyruk doluysa ANINDA hata verir, beklemez.
-                self._queue.put_task(link, next_depth, block=False)
+                self._queue.put_task(link, next_depth, max_depth=max_depth, block=False)
             except Exception:
                 # DÜZELTME 2: continue yerine break koyduk. 
                 # Kuyruk doluysa bu sayfadaki geri kalan yüzlerce linki denemekle 

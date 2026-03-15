@@ -335,12 +335,13 @@ class CrawlTask:
     A simple task unit for the crawler.
 
     Fields:
-        url:   URL to crawl.
-        depth: Depth in the crawl tree (0 = origin).
-               You can use this to enforce a maximum crawl depth.
+        url:       URL to crawl.
+        depth:     Depth in the crawl tree (0 = origin).
+        max_depth: Maximum crawl depth (k) for this crawl run.
     """
     url: str
     depth: int
+    max_depth: int
 
 
 class CrawlQueue:
@@ -367,6 +368,7 @@ class CrawlQueue:
         self,
         url: str,
         depth: int,
+        max_depth: int,
         block: bool = True,
         timeout: Optional[float] = None,
     ) -> None:
@@ -374,16 +376,17 @@ class CrawlQueue:
         Enqueue a new crawl task.
 
         Parameters:
-            block:   If True (default), block until a free slot is available
-                     when the queue is full. This is the main back-pressure
-                     mechanism.
-            timeout: Optional max time in seconds to wait for a free slot.
+            max_depth: Maximum crawl depth (k) for this task's crawl run.
+            block:     If True (default), block until a free slot is available
+                       when the queue is full. This is the main back-pressure
+                       mechanism.
+            timeout:   Optional max time in seconds to wait for a free slot.
 
         Raises:
             queue.Full if `block` is False and the queue is already full,
                        or if `timeout` expires.
         """
-        task = CrawlTask(url=url, depth=depth)
+        task = CrawlTask(url=url, depth=depth, max_depth=max_depth)
         self._queue.put(task, block=block, timeout=timeout)
 
     # ---------- Consumer-side API ----------
@@ -449,7 +452,7 @@ class CrawlQueue:
         """
         with self._queue.mutex:  # type: ignore[attr-defined]
             return [
-                {"url": task.url, "depth": task.depth}
+                {"url": task.url, "depth": task.depth, "max_depth": task.max_depth}
                 for task in list(self._queue.queue)  # type: ignore[attr-defined]
             ]
 
@@ -471,9 +474,10 @@ class CrawlQueue:
                 try:
                     url = item["url"]
                     depth = int(item["depth"])
+                    max_depth = int(item.get("max_depth", 2))
                 except Exception:
                     continue
-                self._queue.queue.append(CrawlTask(url=url, depth=depth))  # type: ignore[attr-defined]
+                self._queue.queue.append(CrawlTask(url=url, depth=depth, max_depth=max_depth))  # type: ignore[attr-defined]
 
             # Reset unfinished_tasks counter to reflect current queue size
             self._queue.unfinished_tasks = len(self._queue.queue)  # type: ignore[attr-defined]
