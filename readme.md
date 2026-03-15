@@ -55,8 +55,18 @@ The crawler automatically saves its state to `state.json` on exit. On the next r
 ## File Structure
 
 ```
-web_server.py      # Entry point: HTTP server, dashboard UI, search logic
-parser.py          # HTML parser and crawler worker threads
-data_structures.py # Thread-safe data structures
-state.json         # Auto-generated crawl state (created at runtime)
+core/
+    web_server.py        # Entry point: HTTP server, dashboard UI, search logic
+    parser.py            # HTML parser and crawler worker threads
+    data_structures.py   # Thread-safe data structures
+
+old_versions_and_extras/
+    main.py              # Original terminal-based (curses) old version
+    server.py            # Earlier version of the web server
+    state.json           # Pre-crawled state file
+    crawler.log          # Sample log output
+
+product_prd.md
+readme.md
+recommendation.md
 ```
