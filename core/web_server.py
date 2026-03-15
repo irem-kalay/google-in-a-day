@@ -26,7 +26,7 @@ from parser import CrawlerWorker
 # Configuration
 # ============================================================
 
-SEED_URL = "https://tr.wikipedia.org/wiki/Anasayfa" #itunün linki"https://obs.itu.edu.tr/public/DersProgram"
+SEED_URL = "https://tr.wikipedia.org/wiki/Anasayfa" # ITU link: "https://obs.itu.edu.tr/public/DersProgram"
 MAX_DEPTH = 2
 NUM_WORKERS = 4
 QUEUE_MAXSIZE = 1000
@@ -141,34 +141,34 @@ def search_index(
     top_n: int,
 ) -> List[Tuple[str, str, int]]:
     """
-    Gelişmiş arama motoru:
+    Advanced search engine:
 
-    1) Strict Intersection (AND mantığı):
-       - Bir URL, sonuçlara yalnızca sorgudaki TÜM terimleri içeriyorsa girer.
-    2) Co-occurrence bonusu:
-       - Pozisyon bilgimiz olmadığı için, beraber görülmeyi yaklaşık olarak
-         her terim için (url, freq) çiftlerinden türetiyoruz:
-           temel_skor  = tüm terim frekanslarının toplamı
-           bonus       = tüm terim frekanslarının EN DÜŞÜĞÜ (min)
-           nihai_skor  = temel_skor + bonus
-       - Böylece hem tüm terimleri içeren sayfalar seçilir, hem de terimlerin
-         benzer yoğunlukta geçtiği (birlikte sık görülen) sayfalar öne çıkar.
+    1) Strict Intersection (AND logic):
+       - A URL is included in results only if it contains ALL query terms.
+    2) Co-occurrence bonus:
+       - Since we have no positional data, we approximate co-occurrence using
+         (url, freq) pairs for each term:
+           base_score        = sum of all term frequencies
+           bonus             = minimum of all term frequencies
+           final_score       = base_score + bonus
+       - This way pages containing all terms are selected, and pages where
+         terms appear at similar density (frequently co-occurring) are ranked higher.
     """
     tokens = normalize_query(query)
     if not tokens:
         return []
 
-    # Her terim için postings: term -> {url: freq}
+    # Postings per term: term -> {url: freq}
     term_postings: Dict[str, Dict[str, int]] = {}
     for term in tokens:
         postings = index.get_postings(term)
-        # Terim hiçbir sayfada yoksa sonuç kümesi boş.
+        # If a term appears in no pages, the result set is empty.
         if not postings:
             return []
         term_postings[term] = postings
 
-    # AND mantığı: Tüm terimlerin kesişimi
-    # İlk terimin URL kümesini başlangıç olarak al, sonra diğerleriyle kesiştir.
+    # AND logic: intersection of all terms
+    # Start with the URL set of the first term, then intersect with the rest.
     iter_tokens = iter(tokens)
     first_term = next(iter_tokens)
     candidate_urls = set(term_postings[first_term].keys())
@@ -187,12 +187,12 @@ def search_index(
             freqs.append(freq)
 
         base_score = sum(freqs)
-        cooccurrence_bonus = min(freqs)  # tüm terimlerin birlikte güçlü geçtiği sayfalara ekstra ağırlık
+        cooccurrence_bonus = min(freqs)  # extra weight for pages where all terms appear with similar strength
         total_score = base_score + cooccurrence_bonus
 
         scores[url] = total_score
 
-    # Title matching bonus: başlıktaki her eşleşen terim için +50 puan
+    # Title matching bonus: +50 points for each query term found in the page title
     if scores:
         title_tokens_cache: Dict[str, List[str]] = {}
         for url in scores.keys():
@@ -603,7 +603,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="logo">
       <span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span>-in-a-Day
     </div>
-    <span id="statusText">Crawler çalışıyor...</span>
+    <span id="statusText">Crawler running...</span>
   </header>
 
   <main class="page-shell">
@@ -616,17 +616,17 @@ HTML_PAGE = """<!DOCTYPE html>
               <input
                 id="searchInput"
                 type="text"
-                placeholder="Bir arama terimi yazın ve Enter'a basın..."
+                placeholder="Type a search term and press Enter..."
                 autocomplete="off"
               />
-              <button type="submit">Ara</button>
+              <button type="submit">Search</button>
             </div>
           </form>
-          <p id="searchInfo" class="search-hint">Sonuç görmek için bir sorgu gönderin.(önce başlangıç sitesi giriniz)</p>
+          <p id="searchInfo" class="search-hint">Submit a query to see results. (Enter a starting URL first.)</p>
         </div>
 
         <div>
-          <p class="results-header">Arama sonuçları</p>
+          <p class="results-header">Search results</p>
           <ul id="results" class="results-list"></ul>
         </div>
       </section>
@@ -635,7 +635,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <aside class="dashboard-panel">
         <h2 class="dashboard-title">Crawler Dashboard</h2>
         <p class="dashboard-subtitle">
-          Gerçek zamanlı olarak crawler'ın durumunu izleyin.
+          Monitor the crawler state in real time.
         </p>
         <div class="metrics-grid">
           <div class="metric-row">
@@ -657,19 +657,19 @@ HTML_PAGE = """<!DOCTYPE html>
           </div>
         </div>
         <p class="metrics-footnote">
-          Metrikler her saniye <code>/api/metrics</code> uç noktasından yenilenir.
-          Arama sonuçları ise <code>/api/search</code> üzerinden &ccedil;ekilir.
+          Metrics are refreshed every second from the <code>/api/metrics</code> endpoint.
+          Search results are fetched from <code>/api/search</code>.
         </p>
         <div class="indexing-section">
-          <h3 class="indexing-title">Manuel Indexleme Başlat</h3>
+          <h3 class="indexing-title">Start Manual Indexing</h3>
           <p class="indexing-description">
-            Yeni bir "seed" URL girerek crawler kuyruğuna manuel olarak sayfa ekleyin.
+            Enter a seed URL to manually add a page to the crawler queue.
           </p>
           <form id="indexForm" class="indexing-form">
             <input
               id="indexUrlInput"
               type="url"
-              placeholder="Örn: https://www.ornek.com/"
+              placeholder="e.g. https://www.example.com/"
               autocomplete="off"
             />
             <button type="submit">Start Indexing</button>
@@ -681,8 +681,8 @@ HTML_PAGE = """<!DOCTYPE html>
   </main>
 
   <footer>
-    Bu demo yalnızca Python standart k&uuml;t&uuml;phanesi ile &ccedil;alışır
-    (<code>http.server</code>, <code>threading</code>, <code>urllib</code> vb.).
+    This demo runs entirely on Python's standard library
+    (<code>http.server</code>, <code>threading</code>, <code>urllib</code>, etc.).
   </footer>
 
   <script>
@@ -720,19 +720,19 @@ HTML_PAGE = """<!DOCTYPE html>
         visitedEl.textContent = data.visited_count;
         queueEl.textContent = data.queue_size;
         updatePill(data.backpressure_status || "-");
-        statusText.textContent = "Crawler çalışıyor...";
+        statusText.textContent = "Crawler running...";
       } catch (err) {
-        statusText.textContent = "Metrikler okunamıyor: " + err;
+        statusText.textContent = "Could not read metrics: " + err;
       }
     }
 
     async function performSearch(query) {
       if (!query.trim()) {
-        searchInfoEl.textContent = "Lütfen boş olmayan bir sorgu girin.";
+        searchInfoEl.textContent = "Please enter a non-empty query.";
         resultsEl.innerHTML = "";
         return;
       }
-      searchInfoEl.textContent = "Aranıyor...";
+      searchInfoEl.textContent = "Searching...";
       resultsEl.innerHTML = "";
       const encoded = encodeURIComponent(query);
       try {
@@ -741,11 +741,11 @@ HTML_PAGE = """<!DOCTYPE html>
         const data = await res.json();
         const results = (data.results || []);
         if (results.length === 0) {
-          searchInfoEl.textContent = "Sonuç bulunamadı.";
+          searchInfoEl.textContent = "No results found.";
           resultsEl.innerHTML = "";
           return;
         }
-        searchInfoEl.textContent = "Toplam " + results.length + " sonuç gösteriliyor.";
+        searchInfoEl.textContent = "Showing " + results.length + " results.";
         const frag = document.createDocumentFragment();
         results.forEach(item => {
           const li = document.createElement("li");
@@ -755,7 +755,7 @@ HTML_PAGE = """<!DOCTYPE html>
           link.href = item.url;
           link.target = "_blank";
           link.className = "result-link";
-          // Başlığı varsa link metni olarak kullan, yoksa URL'i göster
+          // Use the page title as link text if available, otherwise show the URL
           link.textContent = item.title || item.url;
 
           const displayUrl = document.createElement("div");
@@ -774,7 +774,7 @@ HTML_PAGE = """<!DOCTYPE html>
         });
         resultsEl.appendChild(frag);
       } catch (err) {
-        searchInfoEl.textContent = "Arama isteği başarısız: " + err;
+        searchInfoEl.textContent = "Search request failed: " + err;
       }
     }
 
@@ -786,11 +786,11 @@ HTML_PAGE = """<!DOCTYPE html>
     async function startIndexing(url) {
       const trimmed = (url || "").trim();
       if (!trimmed) {
-        indexStatusEl.textContent = "Lütfen geçerli bir URL girin.";
+        indexStatusEl.textContent = "Please enter a valid URL.";
         indexStatusEl.style.color = "#c5221f";
         return;
       }
-      indexStatusEl.textContent = "URL kuyruğa ekleniyor...";
+      indexStatusEl.textContent = "Adding URL to queue...";
       indexStatusEl.style.color = "#5f6368";
       const encoded = encodeURIComponent(trimmed);
       try {
@@ -799,15 +799,15 @@ HTML_PAGE = """<!DOCTYPE html>
         try {
           data = await res.json();
         } catch (e) {
-          // JSON cevabı yoksa, genel hata ile devam et
+          // No JSON response; fall through to generic error handling
         }
         if (!res.ok || !data.ok) {
-          const message = (data && data.error) ? data.error : ("İstek başarısız: HTTP " + res.status);
+          const message = (data && data.error) ? data.error : ("Request failed: HTTP " + res.status);
           indexStatusEl.textContent = message;
           indexStatusEl.style.color = "#c5221f";
           return;
         }
-        indexStatusEl.textContent = "URL kuyruğa eklendi: " + (data.url || trimmed);
+        indexStatusEl.textContent = "URL added to queue: " + (data.url || trimmed);
         indexStatusEl.style.color = "#137333";
         indexUrlInput.value = "";
         setTimeout(() => {
@@ -815,7 +815,7 @@ HTML_PAGE = """<!DOCTYPE html>
           indexStatusEl.style.color = "#5f6368";
         }, 4000);
       } catch (err) {
-        indexStatusEl.textContent = "Indexleme isteği başarısız: " + err;
+        indexStatusEl.textContent = "Indexing request failed: " + err;
         indexStatusEl.style.color = "#c5221f";
       }
     }
@@ -1006,23 +1006,22 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
 # ============================================================
 
 def start_crawler_workers() -> None:
-    # İTÜ'nün en verimli başlangıç noktaları
+    # Best ITU starting points
     itu_seeds = [
-        "https://obs.itu.edu.tr/public/DersProgram",        # Ders programları ve kodlar
-        "https://www.itu.edu.tr/",                          # Ana sayfa (Genel haberler)
-        "https://www.sis.itu.edu.tr/",                      # Öğrenci İşleri (Yönetmelikler, duyurular)
-        "https://ninova.itu.edu.tr/tr/dersler/",            # Ninova (Ders içerikleri ve fakülteler)
-        "https://kutuphane.itu.edu.tr/"                     # Kütüphane (Akademik kaynaklar)
+        "https://obs.itu.edu.tr/public/DersProgram",        # Course schedules and codes
+        "https://www.itu.edu.tr/",                          # Main page (general news)
+        "https://www.sis.itu.edu.tr/",                      # Student Affairs (regulations, announcements)
+        "https://ninova.itu.edu.tr/tr/dersler/",            # Ninova (course content and faculties)
+        "https://kutuphane.itu.edu.tr/"                     # Library (academic resources)
     ]
-    
-    # Önce mevcut state'i diskten yüklemeyi dene; başarılıysa seed'leri yeniden ekleme.
+
+    # Try to load existing state from disk first; if successful, skip re-adding seeds.
     resumed = load_state_from_disk()
     if not resumed:
-        pass  # <--- BURAYA PASS EKLİYORUZ
-        # Otomatik seed ekleme devre dışı bırakıldı.
-        # Manuel indexleme için UI üzerinden veya state.json'dan yüklenen veriler kullanılacaktır.
+        pass  # Automatic seed loading is disabled.
+        # Use the UI to manually add URLs, or load from state.json.
 
-    # Worker'ları başlat (Burası aynı kalıyor)
+    # Start worker threads
     for i in range(NUM_WORKERS):
         worker = CrawlerWorker(
             name=f"worker-{i}",
@@ -1036,8 +1035,8 @@ def start_crawler_workers() -> None:
         )
         worker.start()
         workers.append(worker)
-        # Otomatik seed ekleme devre dışı bırakıldı.
-        # Manuel indexleme için UI üzerinden veya state.json'dan yüklenen veriler kullanılacaktır.
+        # Automatic seed loading is disabled.
+        # Use the UI to manually add URLs, or load from state.json.
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
@@ -1066,7 +1065,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
                 w.join(timeout=5.0)
             except Exception:
                 pass
-        # Çıkmadan önce mevcut durumu diske kaydet
+        # Save current state to disk before exiting
         save_state_to_disk()
 
         logging.info("Server stopped.")
