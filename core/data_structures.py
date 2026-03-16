@@ -335,13 +335,16 @@ class CrawlTask:
     A simple task unit for the crawler.
 
     Fields:
-        url:       URL to crawl.
-        depth:     Depth in the crawl tree (0 = origin).
-        max_depth: Maximum crawl depth (k) for this crawl run.
+        url:           URL to crawl.
+        depth:         Depth in the crawl tree (0 = origin).
+        max_depth:     Maximum crawl depth (k) for this crawl run.
+        hit_rate_secs: Optional per-task delay between HTTP requests; when set,
+                       workers can sleep before processing to throttle crawl rate.
     """
     url: str
     depth: int
     max_depth: int
+    hit_rate_secs: Optional[float] = None
 
 
 class CrawlQueue:
@@ -369,6 +372,7 @@ class CrawlQueue:
         url: str,
         depth: int,
         max_depth: int,
+        hit_rate_secs: Optional[float] = None,
         block: bool = True,
         timeout: Optional[float] = None,
     ) -> None:
@@ -386,7 +390,9 @@ class CrawlQueue:
             queue.Full if `block` is False and the queue is already full,
                        or if `timeout` expires.
         """
-        task = CrawlTask(url=url, depth=depth, max_depth=max_depth)
+        # hit_rate_secs is stored in the task so that workers can optionally
+        # throttle processing without changing the underlying queue behavior.
+        task = CrawlTask(url=url, depth=depth, max_depth=max_depth, hit_rate_secs=hit_rate_secs)
         self._queue.put(task, block=block, timeout=timeout)
 
     # ---------- Consumer-side API ----------
@@ -481,3 +487,17 @@ class CrawlQueue:
 
             # Reset unfinished_tasks counter to reflect current queue size
             self._queue.unfinished_tasks = len(self._queue.queue)  # type: ignore[attr-defined]
+
+    # ---------- Capacity Management ----------
+
+    def get_maxsize(self) -> int:
+        """Kuyruğun güncel maksimum kapasitesini döndürür."""
+        return self._queue.maxsize
+
+    def set_maxsize(self, new_maxsize: int) -> None:
+        """
+        Kuyruğun kapasitesini dinamik olarak günceller.
+        Eğer yeni kapasite mevcut boyuttan küçükse, kuyruk boşalana kadar yeni öğe eklenemez.
+        """
+        with self._queue.mutex:
+            self._queue.maxsize = new_maxsize

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import json
@@ -7,8 +8,10 @@ import re
 import sys
 import threading
 import time
+import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from urllib.parse import urlparse, parse_qs, quote
 
 from data_structures import (
@@ -26,7 +29,7 @@ from parser import CrawlerWorker
 # Configuration
 # ============================================================
 
-SEED_URL = "https://tr.wikipedia.org/wiki/Anasayfa" # ITU link: "https://obs.itu.edu.tr/public/DersProgram"
+#SEED_URL = "https://tr.wikipedia.org/wiki/Anasayfa" # ITU link: "https://obs.itu.edu.tr/public/DersProgram"
 NUM_WORKERS = 4
 QUEUE_MAXSIZE = 1000
 SEARCH_TOP_N = 10
@@ -47,6 +50,11 @@ title_map = ThreadSafeTitleMap()
 metadata_map = ThreadSafeMetadataMap()
 stop_event = threading.Event()
 workers: List[CrawlerWorker] = []
+
+# Each manual seed URL becomes a distinct crawler "session".
+# Thread-safe: guarded by crawler_sessions_lock.
+crawler_sessions_lock = threading.Lock()
+crawler_sessions: List[Dict[str, object]] = []
 
 
 # ============================================================
@@ -138,7 +146,8 @@ def search_index(
     title_map: ThreadSafeTitleMap,
     query: str,
     top_n: int,
-) -> List[Tuple[str, str, int]]:
+    return_detailed: bool = False,
+) -> List:
     """
     Advanced search engine:
 
@@ -214,16 +223,42 @@ def search_index(
 
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
 
-    results: List[Tuple[str, str, int]] = []
+    # Varsayılan davranışı bozmadan, isteğe bağlı olarak zenginleştirilmiş sonuç döndür.
+    if not return_detailed:
+        results: List[Tuple[str, str, int]] = []
+        for url, _score in ranked[:top_n]:
+            meta = metadata.get_metadata(url)
+            if meta is None:
+                origin_url, depth = None, 0
+            else:
+                origin_url, depth = meta
+            results.append((url, origin_url or "", depth))
+        return results
+
+    detailed_results: List[Dict[str, object]] = []
     for url, _score in ranked[:top_n]:
         meta = metadata.get_metadata(url)
         if meta is None:
             origin_url, depth = None, 0
         else:
             origin_url, depth = meta
-        results.append((url, origin_url or "", depth))
 
-    return results
+        # Her URL için sorgu terimlerinin toplam frekansını hesapla.
+        frequency = 0
+        for term in tokens:
+            frequency += term_postings[term].get(url, 0)
+
+        detailed_results.append(
+            {
+                "url": url,
+                "origin_url": origin_url or "",
+                "depth": depth,
+                "searched_words": tokens,
+                "frequency": frequency,
+            }
+        )
+
+    return detailed_results
 
 
 # ============================================================
@@ -416,6 +451,11 @@ HTML_PAGE = """<!DOCTYPE html>
       color: #5f6368;
       margin-top: 4px;
     }
+    .result-extra {
+      font-size: 12px;
+      color: #5f6368;
+      margin-top: 2px;
+    }
     .muted {
       font-size: 13px;
       color: #5f6368;
@@ -600,6 +640,92 @@ HTML_PAGE = """<!DOCTYPE html>
       line-height: 1.5;
     }
 
+    /* Recent crawlers */
+    .recent-crawlers-section {
+      margin-top: 18px;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .recent-crawlers-title {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: #202124;
+    }
+    .crawler-cards {
+      display: grid;
+      grid-template-columns: 1fr;
+      row-gap: 10px;
+    }
+    .crawler-card {
+      background: #ffffff;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 10px 10px 10px 10px;
+      box-shadow: 0 1px 3px rgba(60, 64, 67, 0.12), 0 1px 2px rgba(60, 64, 67, 0.08);
+    }
+    .crawler-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .crawler-id {
+      font-family: "Roboto Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #1a73e8;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 190px;
+    }
+    .crawler-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      color: #3c4043;
+      background: #f1f3f4;
+      white-space: nowrap;
+    }
+    .crawler-badge.active {
+      color: #137333;
+      background: #e6f4ea;
+      border-color: #cce8d8;
+    }
+    .crawler-badge.completed {
+      color: #5f6368;
+      background: #f1f3f4;
+      border-color: #e0e0e0;
+    }
+    .crawler-origin {
+      font-size: 12px;
+      color: #202124;
+      line-height: 1.35;
+      word-break: break-word;
+      margin-bottom: 4px;
+    }
+    .crawler-origin a {
+      color: #1a0dab;
+      text-decoration: none;
+    }
+    .crawler-origin a:hover {
+      text-decoration: underline;
+    }
+    .crawler-meta {
+      font-size: 12px;
+      color: #5f6368;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
     footer {
       padding: 12px 32px 18px 32px;
       border-top: 1px solid #dadce0;
@@ -667,7 +793,7 @@ HTML_PAGE = """<!DOCTYPE html>
             <div class="metric-label">Queue Size</div>
             <div class="metric-value">
               <span id="queueSize">-</span>
-              <span class="muted">/ {queue_max}</span>
+              <span id="queueMaxSize" class="muted">/ {queue_max}</span> 
             </div>
           </div>
           <div class="metric-row">
@@ -705,9 +831,39 @@ HTML_PAGE = """<!DOCTYPE html>
                 autocomplete="off"
               />
             </div>
+            <div class="depth-input-wrap">
+              <label for="indexHitRateInput">Hit Rate (s)</label>
+              <input
+                id="indexHitRateInput"
+                type="number"
+                min="0"
+                max="60"
+                step="0.1"
+                value="0"
+                title="Delay between requests in seconds"
+                autocomplete="off"
+              />
+            </div>
+            <div class="depth-input-wrap">
+              <label for="indexQueueCapInput">Queue Capacity</label>
+              <input
+                id="indexQueueCapInput"
+                type="number"
+                min="1"
+                max="{queue_max}"
+                value="{queue_max}"
+                title="Logical max queue size for this crawl"
+                autocomplete="off"
+              />
+            </div>
             <button type="submit">Start Indexing</button>
           </form>
           <p id="indexStatus" class="indexing-status"></p>
+        </div>
+
+        <div class="recent-crawlers-section">
+          <h3 class="recent-crawlers-title">Recent Crawlers</h3>
+          <div id="recentCrawlers" class="crawler-cards"></div>
         </div>
       </aside>
     </div>
@@ -731,6 +887,81 @@ HTML_PAGE = """<!DOCTYPE html>
     const indexUrlInput = document.getElementById("indexUrlInput");
     const indexDepthInput = document.getElementById("indexDepthInput");
     const indexStatusEl = document.getElementById("indexStatus");
+    const indexHitRateInput = document.getElementById("indexHitRateInput");
+    const indexQueueCapInput = document.getElementById("indexQueueCapInput");
+    const queueMaxEl = document.getElementById("queueMaxSize"); // YENİ
+    const recentCrawlersEl = document.getElementById("recentCrawlers");
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatCreatedAt(createdAt) {
+      if (!createdAt) return "-";
+      try {
+        const d = new Date(createdAt);
+        if (isNaN(d.getTime())) return String(createdAt);
+        return d.toLocaleString();
+      } catch (e) {
+        return String(createdAt);
+      }
+    }
+
+    function renderCrawlerSessions(sessions) {
+      if (!recentCrawlersEl) return;
+      const list = Array.isArray(sessions) ? sessions.slice().reverse() : [];
+      if (list.length === 0) {
+        recentCrawlersEl.innerHTML = '<div class="muted">No crawler sessions yet.</div>';
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      list.forEach((s) => {
+        const card = document.createElement("div");
+        card.className = "crawler-card";
+
+        const top = document.createElement("div");
+        top.className = "crawler-card-top";
+
+        const idEl = document.createElement("div");
+        idEl.className = "crawler-id";
+        idEl.textContent = (s && s.id) ? String(s.id) : "-";
+
+        const badge = document.createElement("span");
+        const status = (s && s.status) ? String(s.status) : "-";
+        badge.className = "crawler-badge " + (status === "Active" ? "active" : (status === "Completed" ? "completed" : ""));
+        badge.textContent = status;
+
+        top.appendChild(idEl);
+        top.appendChild(badge);
+
+        const originWrap = document.createElement("div");
+        originWrap.className = "crawler-origin";
+        const origin = (s && s.origin) ? String(s.origin) : "";
+        if (origin) {
+          originWrap.innerHTML = '<a href="' + escapeHtml(origin) + '" target="_blank" rel="noreferrer noopener">' + escapeHtml(origin) + "</a>";
+        } else {
+          originWrap.textContent = "-";
+        }
+
+        const meta = document.createElement("div");
+        meta.className = "crawler-meta";
+        const createdAt = (s && s.created_at) ? s.created_at : null;
+        const depthLimit = (s && (s.depth_limit !== undefined && s.depth_limit !== null)) ? s.depth_limit : "-";
+        meta.textContent = "Created: " + formatCreatedAt(createdAt) + " · Depth limit: " + depthLimit;
+
+        card.appendChild(top);
+        card.appendChild(originWrap);
+        card.appendChild(meta);
+        frag.appendChild(card);
+      });
+      recentCrawlersEl.innerHTML = "";
+      recentCrawlersEl.appendChild(frag);
+    }
 
     function updatePill(status) {
       pillEl.textContent = status;
@@ -753,7 +984,14 @@ HTML_PAGE = """<!DOCTYPE html>
         const data = await res.json();
         visitedEl.textContent = data.visited_count;
         queueEl.textContent = data.queue_size;
+        
+        // Gelen yeni kapasite arayüze basılır
+        if (queueMaxEl) {
+          queueMaxEl.textContent = "/ " + data.queue_maxsize; 
+        }
+        
         updatePill(data.backpressure_status || "-");
+        renderCrawlerSessions(data.sessions || []);
         statusText.textContent = "Crawler running...";
       } catch (err) {
         statusText.textContent = "Could not read metrics: " + err;
@@ -801,9 +1039,18 @@ HTML_PAGE = """<!DOCTYPE html>
           const origin = item.origin_url || "seed";
           meta.textContent = "Origin: " + origin + " · Depth: " + item.depth;
 
+          const extra = document.createElement("div");
+          extra.className = "result-extra";
+          const searchedWords = Array.isArray(item.searched_words) ? item.searched_words : [];
+          const freq = (typeof item.frequency === "number") ? item.frequency : null;
+          extra.textContent =
+            "Searched Word(s): " + (searchedWords.length ? searchedWords.join(", ") : "-") +
+            " · Frequency: " + (freq !== null ? freq : "-");
+
           li.appendChild(link);
           li.appendChild(displayUrl);
           li.appendChild(meta);
+          li.appendChild(extra);
           frag.appendChild(li);
         });
         resultsEl.appendChild(frag);
@@ -834,8 +1081,25 @@ HTML_PAGE = """<!DOCTYPE html>
       indexStatusEl.textContent = "Adding URL to queue...";
       indexStatusEl.style.color = "#5f6368";
       const encoded = encodeURIComponent(trimmed);
+      let hitRateParam = "";
+      if (indexHitRateInput && indexHitRateInput.value !== "") {
+        const hr = parseFloat(indexHitRateInput.value);
+        if (!isNaN(hr) && hr >= 0) {
+          hitRateParam = "&hit_rate=" + encodeURIComponent(hr);
+        }
+      }
+      let capacityParam = "";
+      if (indexQueueCapInput && indexQueueCapInput.value !== "") {
+        const cap = parseInt(indexQueueCapInput.value, 10);
+        if (!isNaN(cap) && cap > 0) {
+          capacityParam = "&capacity=" + cap;
+        }
+      }
       try {
-        const res = await fetch("/api/index?url=" + encoded + "&k=" + kValue, { method: "GET" });
+        const res = await fetch(
+          "/api/index?url=" + encoded + "&k=" + kValue + hitRateParam + capacityParam,
+          { method: "GET" }
+        );
         let data = {};
         try {
           data = await res.json();
@@ -921,9 +1185,10 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
     def _handle_metrics(self) -> None:
         visited_count = visited_set.size()
         queue_size = crawl_queue.qsize()
+        current_max = crawl_queue.get_maxsize() # Dinamik kapasiteyi al
 
-        if QUEUE_MAXSIZE > 0:
-            ratio = queue_size / float(QUEUE_MAXSIZE)
+        if current_max > 0:
+            ratio = queue_size / float(current_max)
         else:
             ratio = 0.0
 
@@ -937,10 +1202,21 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
         payload = {
             "visited_count": visited_count,
             "queue_size": queue_size,
-            "queue_maxsize": QUEUE_MAXSIZE,
+            "queue_maxsize": current_max, # Sabit değer yerine mevcut maksimumu gönder
             "backpressure_status": status,
             "backpressure_ratio": ratio,
         }
+
+        # If the queue is empty, consider active sessions completed.
+        if queue_size == 0:
+            with crawler_sessions_lock:
+                for s in crawler_sessions:
+                    if s.get("status") == "Active":
+                        s["status"] = "Completed"
+
+        with crawler_sessions_lock:
+            sessions_snapshot = list(crawler_sessions)
+        payload["sessions"] = sessions_snapshot
 
         body = json.dumps(payload).encode("utf-8")
         self.send_response(200)
@@ -961,19 +1237,34 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
             return
 
         query = query_list[0]
-        results = search_index(inverted_index, metadata_map, title_map, query, SEARCH_TOP_N)
+        results = search_index(
+            inverted_index,
+            metadata_map,
+            title_map,
+            query,
+            SEARCH_TOP_N,
+            return_detailed=True,
+        )
+
+        # search_index artık aranan kelimeler ve frekans bilgisiyle zenginleştirilmiş
+        # bir yapı döndürüyor; burada sadece başlık bilgisini ekliyoruz.
+        payload_results: List[Dict[str, object]] = []
+        for item in results:
+            url = item.get("url", "")
+            payload_results.append(
+                {
+                    "url": url,
+                    "origin_url": item.get("origin_url", ""),
+                    "depth": item.get("depth", 0),
+                    "searched_words": item.get("searched_words", []),
+                    "frequency": item.get("frequency", 0),
+                    "title": title_map.get_title(str(url), str(url)),
+                }
+            )
 
         payload = {
             "query": query,
-            "results": [
-                {
-                    "url": url,
-                    "origin_url": origin_url,
-                    "depth": depth,
-                    "title": title_map.get_title(url, url),
-                }
-                for url, origin_url, depth in results
-            ],
+            "results": payload_results,
         }
         self._send_json(200, payload)
 
@@ -1006,7 +1297,7 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # Parse depth (k); default to 2 if missing or invalid
+        # Parse depth (k)
         k_list = qs.get("k", [])
         try:
             k = int(k_list[0]) if k_list else 2
@@ -1014,29 +1305,77 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
             k = 2
         k = max(0, min(5, k))
 
-        normalized_url = raw_url
-
+        # Parse hit rate
+        hit_rate_list = qs.get("hit_rate", [])
+        hit_rate: Optional[float]
         try:
-            crawl_queue.put_task(normalized_url, depth=0, max_depth=k)
+            hit_rate = float(hit_rate_list[0]) if hit_rate_list else None
+        except (ValueError, TypeError, IndexError):
+            hit_rate = None
+        if hit_rate is not None:
+            hit_rate = max(0.0, min(60.0, hit_rate))
+
+        # --- DEĞİŞİKLİK BURADA BAŞLIYOR ---
+        
+        # 1. Kullanıcının girdiği kapasiteyi al
+        capacity_list = qs.get("capacity", [])
+        logical_capacity: Optional[int]
+        try:
+            logical_capacity = int(capacity_list[0]) if capacity_list else None
+        except (ValueError, TypeError, IndexError):
+            logical_capacity = None
+
+        # 2. Eğer kullanıcı bir sayı girdiyse, kuyruğun GERÇEK maxsize'ını güncelle
+        if logical_capacity is not None:
+            logical_capacity = max(1, logical_capacity) # En az 1 olsun
+            crawl_queue.set_maxsize(logical_capacity) # Kuyruğun fiziksel limitini değiştik
+            logging.info(f"Kuyruk kapasitesi kullanıcı tarafından {logical_capacity} olarak güncellendi.")
+
+        # 3. Kontrolü yeni güncel kapasiteye göre yap
+        current_max = crawl_queue.get_maxsize()
+        if current_max > 0 and crawl_queue.qsize() >= current_max:
+            self._send_json(
+                429,
+                {
+                    "ok": False,
+                    "error": f"Kuyruk kapasitesine ({current_max}) ulaşıldı! Yeni URL eklenemez.",
+                },
+            )
+            return
+            
+        # --- DEĞİŞİKLİK BURADA BİTİYOR ---
+
+        normalized_url = raw_url
+        try:
+            session_id = uuid.uuid4().hex
+            created_at = datetime.now(timezone.utc).isoformat()
+            with crawler_sessions_lock:
+                crawler_sessions.append(
+                    {
+                        "id": session_id,
+                        "origin": normalized_url,
+                        "status": "Active",
+                        "created_at": created_at,
+                        "depth_limit": k,
+                    }
+                )
+
+            crawl_queue.put_task(
+                normalized_url,
+                depth=0,
+                max_depth=k,
+                hit_rate_secs=hit_rate,
+            )
             metadata_map.record_discovery(normalized_url, origin_url=None, depth=0)
         except Exception:
             logging.exception("Failed to enqueue manual index URL: %s", normalized_url)
             self._send_json(
                 500,
-                {
-                    "ok": False,
-                    "error": "Failed to enqueue URL for indexing.",
-                },
+                {"ok": False, "error": "Failed to enqueue URL for indexing."},
             )
             return
 
-        self._send_json(
-            200,
-            {
-                "ok": True,
-                "url": normalized_url,
-            },
-        )
+        self._send_json(200, {"ok": True, "url": normalized_url})
 
     # ------------- Utility -------------
 

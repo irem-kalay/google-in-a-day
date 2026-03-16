@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import logging
@@ -7,6 +8,7 @@ import time
 from html.parser import HTMLParser
 from typing import List, Tuple, Iterable, Optional
 from urllib.parse import urljoin
+from urllib.parse import urlsplit, urlunsplit, quote
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
@@ -240,6 +242,12 @@ class CrawlerWorker(threading.Thread):
         url = task.url
         depth = task.depth
 
+        # Eğer görev özel bir istek hızı tanımlıyorsa, HTTP isteğinden önce
+        # kısa bir gecikme ekleyerek crawl hızını yumuşatırız.
+        hit_rate_secs = getattr(task, "hit_rate_secs", None)
+        if isinstance(hit_rate_secs, (int, float)) and hit_rate_secs > 0:
+            time.sleep(float(hit_rate_secs))
+
         # Eğer bu URL için henüz metadata kaydı yoksa (örneğin seed URL),
         # en azından kendi derinliğiyle bir kayıt oluştur.
         if self._metadata_map is not None:
@@ -297,6 +305,13 @@ class CrawlerWorker(threading.Thread):
 
         Hata durumlarında None döner (ve crawler devam eder).
         """
+        # NOTE: parse_qs / kullanıcı girdisi gibi kaynaklar URL'yi Unicode olarak
+        # decode edebilir (ör. "Roma_İmparatorluğu"). urllib.request, URL'yi
+        # ASCII'ye encode ederken Unicode karakterlerde UnicodeEncodeError
+        # verebilir. Bu yüzden request öncesi URL'yi güvenli şekilde yeniden
+        # percent-encode ediyoruz (mevcut %XX kaçışlarını bozmadan).
+        url = self._normalize_url_for_request(url)
+
         req = Request(
             url,
             headers={"User-Agent": self._user_agent},
@@ -328,6 +343,62 @@ class CrawlerWorker(threading.Thread):
             self._logger.exception("Beklenmedik hata (fetch_html): %s", url)
 
         return None
+
+    @staticmethod
+    def _normalize_url_for_request(url: str) -> str:
+        """
+        Ensure URL is safe to pass into urllib.request.
+
+        - IDNA-encode the hostname (punycode) if needed.
+        - Percent-encode non-ASCII characters in path/query/fragment.
+        - Preserve existing percent-escapes by keeping '%' in the safe set.
+        """
+        try:
+            parts = urlsplit(url)
+        except Exception:
+            return url
+
+        scheme = parts.scheme
+        netloc = parts.netloc
+        path = parts.path or ""
+        query = parts.query or ""
+        fragment = parts.fragment or ""
+
+        # IDNA handling for hostnames (also keeps userinfo/port if present).
+        if netloc:
+            userinfo = ""
+            hostport = netloc
+            if "@" in netloc:
+                userinfo, hostport = netloc.rsplit("@", 1)
+
+            host = hostport
+            port = ""
+            if hostport.startswith("["):
+                # IPv6 literal like: [::1]:8080
+                end = hostport.find("]")
+                if end != -1:
+                    host = hostport[: end + 1]
+                    port = hostport[end + 1 :]
+            elif ":" in hostport:
+                host, port = hostport.rsplit(":", 1)
+                port = ":" + port
+
+            if host and not host.startswith("["):
+                try:
+                    host = host.encode("idna").decode("ascii")
+                except Exception:
+                    pass
+
+            hostport = host + port
+            netloc = (userinfo + "@") if userinfo else ""
+            netloc += hostport
+
+        # Keep '%' safe to avoid double-encoding existing percent escapes.
+        path = quote(path, safe="/%:@")
+        query = quote(query, safe="=&%:+,;/@")
+        fragment = quote(fragment, safe="%")
+
+        return urlunsplit((scheme, netloc, path, query, fragment))
 
     def _enqueue_new_links(
         self,
