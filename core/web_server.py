@@ -31,7 +31,8 @@ from parser import CrawlerWorker
 
 #SEED_URL = "https://tr.wikipedia.org/wiki/Anasayfa" # ITU link: "https://obs.itu.edu.tr/public/DersProgram"
 NUM_WORKERS = 4
-QUEUE_MAXSIZE = 1000
+QUEUE_DEFAULT_SIZE = 1000   # Program açıldığında ilk değer
+QUEUE_ABSOLUTE_MAX = 10000  # Kullanıcının çıkabileceği en üst limit
 SEARCH_TOP_N = 10
 METRICS_BACKPRESSURE_HIGH = 0.9
 METRICS_BACKPRESSURE_MED = 0.6
@@ -45,7 +46,7 @@ QUERY_TOKEN_SPLIT_RE = re.compile(r"[^a-zA-Z0-9çğıöşüÇĞIİÖŞÜ]+")
 
 visited_set = ThreadSafeVisitedSet()
 inverted_index = ThreadSafeInvertedIndex()
-crawl_queue = CrawlQueue(maxsize=QUEUE_MAXSIZE)
+crawl_queue = CrawlQueue(maxsize=QUEUE_DEFAULT_SIZE)
 title_map = ThreadSafeTitleMap()
 metadata_map = ThreadSafeMetadataMap()
 stop_event = threading.Event()
@@ -847,11 +848,11 @@ HTML_PAGE = """<!DOCTYPE html>
             <div class="depth-input-wrap">
               <label for="indexQueueCapInput">Queue Capacity</label>
               <input
-                id="indexQueueCapInput"
-                type="number"
-                min="1"
-                max="{queue_max}"
-                value="{queue_max}"
+                id="indexQueueCapInput" 
+                type="number" 
+                value="{queue_default}" 
+                min="1" 
+                max="{queue_max}" 
                 title="Logical max queue size for this crawl"
                 autocomplete="off"
               />
@@ -1138,7 +1139,9 @@ HTML_PAGE = """<!DOCTYPE html>
   </script>
 </body>
 </html>
-""".replace("{queue_max}", str(QUEUE_MAXSIZE))
+"""
+HTML_PAGE = HTML_PAGE.replace("{queue_max}", str(QUEUE_ABSOLUTE_MAX))
+HTML_PAGE = HTML_PAGE.replace("{queue_default}", str(QUEUE_DEFAULT_SIZE))
 
 # ============================================================
 # HTTP Handler
