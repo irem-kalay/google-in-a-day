@@ -19,10 +19,10 @@ The original `state.json` is in the `old_versions_and_extras` folder.
 
 ```bash
 cd core
-python web_server.py
+python3 web_server.py
 ```
 
-Then open your browser and go to localhost:
+Then open your browser and go to:
 
 ```
 http://127.0.0.1:8000
@@ -30,41 +30,69 @@ http://127.0.0.1:8000
 
 ## How to Index
 
-To start crawling, enter a URL into the **Index** box in the UI and press Enter. The crawler will immediately begin crawling from that URL up to the configured depth.
+To start crawling, fill in the **Start Manual Indexing** form in the dashboard and press **Start Indexing**. The crawler will immediately begin crawling from that URL up to the configured depth.
 
-You can add multiple URLs one by one — each one is enqueued and crawled concurrently by the worker threads.
+You can add multiple URLs one by one — each is enqueued and crawled concurrently by the worker threads.
 
 ## Configuration
 
-Edit the constants at the top of `web_server.py`:
+These constants can be edited at the top of `web_server.py`:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `MAX_DEPTH` | `2` | Maximum crawl depth |
 | `NUM_WORKERS` | `4` | Number of concurrent crawler threads |
-| `QUEUE_MAXSIZE` | `1000` | Back-pressure queue limit |
+| `QUEUE_DEFAULT_SIZE` | `1000` | Default back-pressure queue limit on startup |
+| `QUEUE_ABSOLUTE_MAX` | `10000` | Hard ceiling on queue capacity the user can set via UI |
+| `SEARCH_TOP_N` | `10` | Maximum number of search results returned |
+| `METRICS_BACKPRESSURE_HIGH` | `0.9` | Queue fill ratio threshold for HIGH back-pressure |
+| `METRICS_BACKPRESSURE_MED` | `0.6` | Queue fill ratio threshold for MEDIUM back-pressure |
 
-### API Endpoints
-The dashboard is powered by lightweight JSON API endpoints:
-- `GET /api/metrics`: Returns crawler state and back-pressure status.
-- `GET /api/search?q={query}`: Returns ranked search results for a given query.
-- `GET /api/index?url={url}`: Enqueues a new URL for the crawler.
+Crawl depth (`k`) is set **per crawl session** in the UI (0–5), not as a global constant.
 
-## Dashboard
+## Dashboard & UI Controls
 
 The web UI updates every second and shows:
-- Number of URLs visited
-- Current queue depth and back-pressure status (LOW / MEDIUM / HIGH)
+- **Visited URLs** — number of pages successfully crawled
+- **Queue Size / Capacity** — current pending tasks vs. the active queue limit
+- **Back-Pressure** — LOW / MEDIUM / HIGH based on queue fill ratio
+- **Recent Crawlers** — list of crawl sessions with origin URL, depth limit, and status
 
-**To index:** enter a URL into the Index box and press Enter.
+### Indexing form fields
+
+| Field | Description |
+|---|---|
+| URL | Seed URL to start crawling from |
+| Depth (k) | Maximum crawl depth (0–5) |
+| Hit Rate (s) | Optional per-request delay in seconds (throttles crawl speed) |
+| Queue Capacity | Overrides the active queue size limit for this crawl |
 
 **To search:** type a query into the search box and press Enter. Results are returned as `(url, origin_url, depth)` triples, ranked by term frequency, co-occurrence bonus, and title match.
 
 **To stop:** press `Ctrl+C` in the terminal.
 
+## API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/metrics` | Returns crawler state, queue stats, back-pressure status, and session list |
+| `GET /api/search?q={query}` | Returns ranked search results for a given query |
+| `GET /api/index?url={url}&k={depth}&hit_rate={s}&capacity={n}` | Enqueues a new URL for crawling |
+
+## Ranking Algorithm
+
+Search results are scored using three signals:
+
+1. **Term frequency** — sum of how often each query term appears in the page
+2. **Co-occurrence bonus** — the minimum frequency across all terms (rewards pages where all terms appear with similar density)
+3. **Title match bonus** — +50 points per query term found in the page `<title>`
+
+Only pages containing **all** query terms (AND logic) are returned.
+
 ## State Persistence
 
-The crawler automatically saves its state to `state.json` on exit. On the next run, it resumes from where it left off instead of restarting from scratch.
+The crawler automatically saves its state to `state.json` on exit (`Ctrl+C`). On the next run, it resumes from where it left off instead of restarting from scratch.
+
+The saved state includes: visited URLs, inverted index, page titles, URL metadata (origin + depth), and the pending crawl queue.
 
 ## File Structure
 
