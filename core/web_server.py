@@ -256,6 +256,7 @@ def search_index(
                 "depth": depth,
                 "searched_words": tokens,
                 "frequency": frequency,
+                "relevance_score": _score,
             }
         )
 
@@ -1044,9 +1045,11 @@ HTML_PAGE = """<!DOCTYPE html>
           extra.className = "result-extra";
           const searchedWords = Array.isArray(item.searched_words) ? item.searched_words : [];
           const freq = (typeof item.frequency === "number") ? item.frequency : null;
+          const score = (typeof item.relevance_score === "number") ? item.relevance_score : null;
           extra.textContent =
             "Searched Word(s): " + (searchedWords.length ? searchedWords.join(", ") : "-") +
-            " · Frequency: " + (freq !== null ? freq : "-");
+            " · Frequency: " + (freq !== null ? freq : "-") +
+            " · Relevance Score: " + (score !== null ? score : "-");
 
           li.appendChild(link);
           li.appendChild(displayUrl);
@@ -1262,6 +1265,7 @@ class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
                     "searched_words": item.get("searched_words", []),
                     "frequency": item.get("frequency", 0),
                     "title": title_map.get_title(str(url), str(url)),
+                    "relevance_score": item.get("relevance_score", 0),
                 }
             )
 
