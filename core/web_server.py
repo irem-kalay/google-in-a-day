@@ -5,10 +5,12 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
 import uuid
+import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, List, Tuple, Optional
@@ -1153,6 +1155,10 @@ HTML_PAGE = HTML_PAGE.replace("{queue_default}", str(QUEUE_DEFAULT_SIZE))
 class SearchHTTPRequestHandler(BaseHTTPRequestHandler):
     server_version = "GoogleInADayHTTP/0.1"
 
+    def address_string(self) -> str:
+        # Skip reverse DNS lookup — just return the raw IP to avoid per-request delay
+        return self.client_address[0]
+
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         # Forward logs to the standard logging module instead of stderr
         logging.getLogger("http").info(
@@ -1411,11 +1417,13 @@ def start_crawler_workers() -> None:
     ]
 
     # Try to load existing state from disk first; if successful, skip re-adding seeds.
-    resumed = load_state_from_disk()
-    if not resumed:
-        pass  # Automatic seed loading is disabled.
-        # Use the UI to manually add URLs, or load from state.json.
+    # NEW — loads state in background, server starts immediately
+    def _load_and_resume():
+        resumed = load_state_from_disk()
+        if not resumed:
+            pass
 
+    threading.Thread(target=_load_and_resume, daemon=True, name="state-loader").start()
     # Start worker threads
     for i in range(NUM_WORKERS):
         worker = CrawlerWorker(
@@ -1443,6 +1451,16 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
 
     httpd = HTTPServer((host, port), SearchHTTPRequestHandler)
     logging.info("Web UI running on http://%s:%d/", host, port)
+
+    def _open_browser():
+        time.sleep(0.5)
+        url = f"http://{host}:{port}/"
+        chrome = "/Applications/Google Chrome.app"
+        if os.path.exists(chrome):
+            subprocess.Popen(["open", "-a", "Google Chrome", url])
+        else:
+            webbrowser.open(url)
+    threading.Thread(target=_open_browser, daemon=True, name="browser-opener").start()
 
     try:
         httpd.serve_forever()

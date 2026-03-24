@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import queue as _queue_module
 import re
 import threading
 import time
@@ -215,15 +216,10 @@ class CrawlerWorker(threading.Thread):
             try:
                 # Kuyruk boşsa belirli bir süre bekle, sonra yeniden dene veya çık.
                 task = self._queue.get_task(block=True, timeout=self._idle_exit_seconds)
+            except _queue_module.Empty:
+                # Queue boş kaldı — normal bekleme durumu, devam et.
+                continue
             except Exception as exc:
-                # queue.Empty dahil tüm istisnalar.
-                # Kuyruk uzun süre boşsa, worker'ı zarifçe sonlandırabiliriz.
-                if isinstance(exc, Exception):
-                    if isinstance(exc, type(getattr(__import__("queue"), "Empty"))):
-                        # gerçekten queue.Empty mi diye kaba bir kontrol;
-                        # çoğu durumda exc.__class__ is queue.Empty olacaktır.
-                        self._logger.info("Kuyruk uzun süre boş, worker sonlanıyor.")
-                        break
                 # Beklenmedik bir şey olursa loglayıp devam edelim.
                 self._logger.exception("Kuyruktan görev alınırken hata: %s", exc)
                 continue
