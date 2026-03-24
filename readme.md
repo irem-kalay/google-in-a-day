@@ -101,8 +101,6 @@ core/
     web_server.py        # Entry point: HTTP server, dashboard UI, search logic
     parser.py            # HTML parser and crawler worker threads
     data_structures.py   # Thread-safe data structures
-
-old_versions_and_extras/
     state.json           # Pre-crawled state file
 
 product_prd.md
